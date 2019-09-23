@@ -1,0 +1,301 @@
+---
+title: "preschool_analysis"
+output: html_document
+---
+
+---
+title: "Preschool Geospatial Analysis in Singapore"
+author: "Zhuo Yunying Kaelyn"
+date: "23 September 2019"
+---
+
+```{r echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+packages = c('sf', 'rgdal','rgeos','tmap', 'tidyverse','plyr','ggplot2','dplyr','plotly')
+for (p in packages){
+  if(!require(p, character.only = T)){
+    install.packages(p)
+  }
+  library(p,character.only = T)
+}
+```
+
+
+#Demand of PreSchool Services 
+
+To show the distribution of demand of pre-school services, two datasets will be used, namely the Singapore Subzone Shapefile (MP14_SUBZONE_WEB_PL) as well as the Residential Population by Age and Sex 2000 to 2017 csv file (respopagsex2000to2017.csv). 
+
+#Importing Data and Preparation
+```{r}
+mpsz <- st_read(dsn = "data/spatial",
+                layer = "MP14_SUBZONE_WEB_PL")
+```
+
+#Improting Aspatial Data into R 
+```{r}
+popagsex <- read_csv("data/aspatial/respopagsex2000to2017.csv")
+head(popagsex)
+```
+
+```{r}
+summary(popagsex)
+```
+
+#Data Preparation 
+
+To ensure a consistent and fair comparison throughout the assignment, the data for the year of 2017 is used to populate the demand of preschool services. Under the website of the Early Childhood Development Agency in Singapore (https://www.ecda.gov.sg/pages/aboutus.aspx), Kindergartens provide pre-school development programme for children from about 2 years to 7 years of age while the Childcare centres provide child care and pre-school developmental programmes for children aged between 18 months and below 7 years old. As infant care programmes is only a small section of the existing child care services, this assignment will not take into account of children aged below 18 months. Across Kindergartens and Childcare Centres, this assignment will assume that the general age of the population of preschool services are aged from 2 to 6 years old.
+
+```{r}
+popagsex2017 <- popagsex %>%
+  filter(Time == 2017) %>%
+  spread(AG, Pop) %>%
+  mutate(PRESCHOOLAGE = 0.6*(`0_to_4`)+ 0.4*(`5_to_9`)) %>%
+  mutate_at(.vars = vars(`PA`, `SZ`), .funs = funs(toupper)) %>%
+  select(`PA`, `SZ`,`Sex`,`PRESCHOOLAGE`) %>%
+  spread(`Sex`,`PRESCHOOLAGE`) %>%
+  mutate(`PRESCHOOLAGE` = `Males` + `Females`) %>%
+  select(`PA`, `SZ`, `PRESCHOOLAGE`)
+```
+
+```{r}
+head(popagsex2017)
+```
+
+#Joining attribute data and geospatial data 
+```{r}
+mpsz_age2017 <- left_join(mpsz, popagsex2017,
+                              by = c("SUBZONE_N" = "SZ"))
+head(mpsz_age2017)
+```
+
+#Drawing Box Plot to show the numerical attribute distribution 
+
+```{r}
+demandboxplot <- plot_ly(popagsex2017, y = ~PRESCHOOLAGE, color = I("Black"), 
+             alpha = 1, boxpoints = "suspectedoutliers")
+
+demandboxplotfinal <- demandboxplot %>% add_boxplot(x = "Preschools Demand")
+
+demandboxplotfinal
+
+```
+
+#Visualising Geospatial Data using Choropleth Map
+
+```{r}
+tmap_mode("view")
+```
+
+
+```{r}
+demandmap <- tm_shape(mpsz_age2017)+
+  tm_fill("PRESCHOOLAGE",
+          style = "quantile",
+          palette = "OrRd",
+          title = "No. of Children 2 to 6", 
+          id="SUBZONE_N",
+          popup.vars=c("Planning Area"="PLN_AREA_N", "Subzone"="SUBZONE_N", "Total Demand of Enrollment Places in Preschool"="PRESCHOOLAGE")) +
+  
+  tm_layout(main.title = "Geographical distribution of Demand of Preschool",
+            main.title.position = "center",
+            main.title.size = 1.2,
+            legend.height = 0.45,
+            legend.width = 0.35,
+            frame = TRUE) +
+  tm_borders(alpha = 0.5) +
+  tm_compass(type="8star", size = 2) +
+  tm_scale_bar()
+
+demandmap
+```
+
+
+#Plot Out the Supply 
+
+I first import the data (Subzone shapefile) as well as the preschool locaiton (preschool location shapfile) using sf packages. Supply of preschool services are in the year of 2017 as the shapefile downloaded are updated as of Dec 2017 by Data.gov.sg..  Next, I ensure that the projection system are set to 3414. Subsequently, I convert the preschool location spatial dataframe to normal datafrome in list format inorder to continue the data wraggling (by calculating the number of preschool within each subzone) for the plotting of choropleth map afterwards. Once the number of preschool facilities are calculated, I use the average enrolment cacluated from the Statistics on Child Care Centres (from https://www.msf.gov.sg/policies/Strong-and-Stable-Families/Nurturing-and-Protecting-the-Young/Child-and-Student-Care-Centres-and-Services/Pages/Child-Care-Centres.aspx). In this case, teh average enrolment is estimated to be 95 children across all programmes within one single preschool centre regardless of kindergarten or child care centres. 
+
+```{r}
+tmap_mode("view")
+```
+
+#Improting GIS data in KML format 
+```{r}
+sf_preschool = st_read("data/pre-schools-location/pre-schools-location-kml.kml")
+```
+
+#Checking the contents of Spatial Data Frame for mpsz
+```{r}
+summary(mpsz)
+```
+
+```{r}
+head(mpsz, n=4)
+```
+
+#Working with Projection 
+```{r}
+st_crs(mpsz)
+```
+
+#Since there is no Projection system, I will assign a projection system of 3414
+```{r}
+mpsz3414 <- st_transform(mpsz, 3414)
+```
+
+#Repeat the same method for projection system for preschool dataset
+
+```{r}
+st_crs(sf_preschool)
+```
+
+#Update the projection system to 3414
+```{r}
+sf_preschool3414 <- st_transform(sf_preschool, 3414)
+```
+
+```{r}
+st_crs(sf_preschool3414)
+```
+
+#join both dataset 
+```{r}
+mpsz_preschool_3414 <- st_join(mpsz3414, sf_preschool3414, join = st_intersects)
+```
+
+#Manipulation to get the numer of preschool in each subzone 
+
+
+```{r}
+#convert to dataframe
+summary(mpsz_preschool_3414)
+df <- as.data.frame(mpsz_preschool_3414)
+head(df)
+```
+
+```{r}
+dfmpsz_preschool_final <- with(df, df[!(Name == "" | is.na(Name)), ])
+tail(dfmpsz_preschool_final)
+```
+
+#select necessary variables to keep in the dataframe
+```{r}
+
+mpsz_preschoolcleaned = subset(dfmpsz_preschool_final, select = c("SUBZONE_N", "Name", "Description", "geometry" ))
+head(mpsz_preschoolcleaned)
+```
+
+#Group by the subzone 
+```{r}
+mpsz_preschoolcleanedfinal <- count(mpsz_preschoolcleaned, c("SUBZONE_N"))
+head(mpsz_preschoolcleanedfinal)
+```
+
+#Find the total supply for each subzone by considering the capactiy of preschool facilities (assume one centre has a capacity of 95) assume pre-school enrollment is constant for all preschool facilities
+
+```{r}
+mpsz_preschoolcleanedfinal$Supply <- mpsz_preschoolcleanedfinal[,2]*95
+head(mpsz_preschoolcleanedfinal)
+```
+
+
+#Joining attribute data and geospatial data 
+```{r}
+preschoolsupply2017 <- left_join(mpsz3414, mpsz_preschoolcleanedfinal,
+                              by = c("SUBZONE_N" = "SUBZONE_N"))
+head(preschoolsupply2017)
+```
+
+#Drawing Box Plot to show the numerical attribute distribution 
+
+```{r}
+supplyboxplot <- plot_ly(mpsz_preschoolcleanedfinal, y = ~Supply, color = I("Black"), 
+             alpha = 1, boxpoints = "suspectedoutliers")
+
+supplyboxplotfinal <- supplyboxplot %>% add_boxplot(x = "Preschools Supply")
+
+supplyboxplotfinal
+
+```
+
+#Turn on interactive viewing mode
+```{r}
+tmap_mode("view")
+```
+
+#Visualising Geospatial Data
+
+```{r}
+supplymap <- tm_shape(preschoolsupply2017)+
+  tm_fill("Supply",
+          style = "quantile",
+          palette = "BuGn",
+          title = "Total No of Enrollment Places in Preschools",
+          id="SUBZONE_N",
+          popup.vars=c("Planning Area"="PLN_AREA_N", "Subzone"="SUBZONE_N", "Total Supply of Enrollment Places in Preschools"="Supply")) +
+  tm_layout(main.title = "Geographical distribution of Supply of Preschool",
+            main.title.position = "center",
+            main.title.size = 1.2,
+            legend.height = 0.45,
+            legend.width = 0.35,
+            frame = TRUE) +
+  tm_borders(alpha = 0.5) +
+  tm_compass(type="8star", size = 2) +
+  tm_scale_bar() 
+
+
+supplymap
+```
+
+
+#Matching the Demand and Supply 
+
+#Method 1: Show Side-by-side Map + Synchronize
+```{r}
+tmap_arrange(demandmap, supplymap, asp=1, ncol=2)
+```
+
+#Method 2: Show Scatter Plot 
+#Data Wraggling 
+
+```{r}
+head(mpsz_preschoolcleanedfinal)
+mpsz_preschoolcleanedfinal2 <- select(mpsz_preschoolcleanedfinal, -c(2))
+colnames(mpsz_preschoolcleanedfinal2) <- c("Subzone", "Supply")
+head(mpsz_preschoolcleanedfinal2)
+
+head(popagsex2017)
+colnames(popagsex2017) <- c("Planning_Area", "Subzone", "Demand")
+head(popagsex2017)
+
+```
+
+#Perform Outerjoin to merge both dataset
+```{r}
+
+DDSS <- merge(popagsex2017, mpsz_preschoolcleanedfinal2, by="Subzone", all=TRUE)
+
+head(DDSS)
+summary(DDSS)
+
+```
+
+#Replace NA with 0 in the Supply 
+```{r}
+DDSS[is.na(DDSS)] <- 0 
+summary(DDSS)
+```
+
+
+#Draw Scatter Plot + Add linear regression + Add confidence interval
+```{r}
+p<- ggplot(DDSS, aes(x=Demand, y=Supply, text = paste("Subzone:", Subzone) )) + geom_point(colour = "red", size=2, alpha=0.4) + geom_abline(colour = "darkblue", intercept = 0, slope = 1) +
+  ggtitle("Scatter Plot of Supply and Demand for Singapore Preschool Facilities in 2017")
+
+  ggplotly(p)
+```
+
+
+
+
+
+
+
